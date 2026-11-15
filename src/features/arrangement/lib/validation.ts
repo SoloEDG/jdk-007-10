@@ -1,4 +1,5 @@
 import type { Session, Track, Note } from "@/shared/types";
+import { sidechainConnections } from "@/features/mixer/lib/sidechain";
 const object = (x: unknown): x is Record<string, unknown> =>
   !!x && typeof x === "object" && !Array.isArray(x);
 const finite = (x: unknown, min: number, max: number): x is number =>
@@ -57,5 +58,10 @@ export function validateSession(raw: unknown): Session {
     if (!object(c) || !finite(c.volume, 0, 1) || typeof c.muted !== "boolean")
       throw new Error("混音数据无效");
   }
-  return structuredClone(raw) as unknown as Session;
+  // Validate every sidechain reference against the tracks before returning;
+  // sessions saved before sidechain existed simply have no `sidechains` key.
+  const safe = structuredClone(raw) as unknown as Session;
+  if (raw.sidechains !== undefined)
+    safe.sidechains = sidechainConnections(raw.sidechains, safe.tracks);
+  return safe;
 }

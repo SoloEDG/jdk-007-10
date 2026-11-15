@@ -7,8 +7,13 @@ import {
   saveSession,
   loadSession,
 } from "@/features/arrangement";
-import { createMixer } from "@/features/mixer";
-import type { NoteInput, Instrument, Session } from "@/shared/types";
+import { createMixer, SIDECHAIN_DEFAULTS } from "@/features/mixer";
+import type {
+  NoteInput,
+  Instrument,
+  Session,
+  SidechainSettings,
+} from "@/shared/types";
 export function createStudio(notify: () => void) {
   const engine = createEngine(),
     transport = createTransport(),
@@ -45,6 +50,8 @@ export function createStudio(notify: () => void) {
     transport.stop();
     recorder.cancel();
     cancelVoices();
+    // Stopping silences the source; let every ducked target breathe back up.
+    mixer.release();
     notify();
   };
   const pause = () => {
@@ -52,6 +59,7 @@ export function createStudio(notify: () => void) {
     transport.pause(now());
     recorder.cancel();
     cancelVoices();
+    mixer.release();
     feedback("播放已暂停；未完成录音已取消，原片段保留。");
   };
   const unlock = async () => {
@@ -66,6 +74,7 @@ export function createStudio(notify: () => void) {
     const token = ++epoch;
     try {
       if (!(await unlock()) || token !== epoch) return;
+      mixer.resume();
       transport.start(now() + 0.02);
       tick();
       notify();
@@ -109,6 +118,7 @@ export function createStudio(notify: () => void) {
         feedback("请先选择对应乐器的轨道");
         return;
       }
+      mixer.resume();
       const abs = transport.view(now()).absolute;
       const take = recorder.advance(abs);
       if (take) arrangement.commit(take.trackId, take.notes);
@@ -135,9 +145,12 @@ export function createStudio(notify: () => void) {
   };
   const install = (session: Session) => {
     stop();
+    // The session was validated as a whole (tracks + every sidechain
+    // reference) before anything replaces the current work.
     const valid = arrangement.restore(session);
     transport.configure(valid.bpm, valid.beats);
-    mixer.restore(valid.channels, valid.master);
+    mixer.restore(valid.channels, valid.master, valid.sidechains ?? []);
+    mixer.resume();
     notify();
   };
   const timer = window.setInterval(() => {
@@ -200,11 +213,16 @@ export function createStudio(notify: () => void) {
     remove() {
       guard(() => {
         const selected = arrangement.selected();
-        if (selected) {
-          stop();
-          arrangement.remove(selected.id);
-          syncMixer();
-        }
+        if (!selected) return;
+        stop();
+        arrangement.remove(selected.id);
+        const dropped = mixer.prune(
+          arrangement.snapshot().tracks.map((t) => t.id),
+        );
+        syncMixer();
+        message = dropped
+          ? `已删除 ${selected.name}，同时移除 ${dropped} 组相关侧链；被压低轨道已平滑回到基础音量。`
+          : `已删除 ${selected.name}`;
       });
     },
     clear() {
@@ -222,6 +240,7 @@ export function createStudio(notify: () => void) {
       const token = ++epoch;
       try {
         if (!(await unlock()) || token !== epoch) return;
+        mixer.resume();
         const state = transport.view(now());
         if (!state.running) transport.start(now() + 0.02);
         recorder.arm(
@@ -252,6 +271,27 @@ export function createStudio(notify: () => void) {
       mixer.mute(id);
       notify();
     },
+    connectSidechain(sourceId: string, targetId: string) {
+      guard(() => {
+        const tracks = arrangement.snapshot().tracks;
+        const link = mixer.connect(sourceId, targetId, tracks);
+        const source = tracks.find((t) => t.id === sourceId)!;
+        const target = tracks.find((t) => t.id === targetId)!;
+        message = `侧链已建立 · ${source.name} 出现时压低 ${target.name} · 深度 ${Math.round(SIDECHAIN_DEFAULTS.depth * 100)}%`;
+      });
+    },
+    updateSidechain(id: string, settings: Partial<SidechainSettings>) {
+      guard(() => {
+        mixer.update(id, settings);
+        message = "侧链参数已更新 · 现场可听到变化";
+      });
+    },
+    disconnectSidechain(id: string) {
+      guard(() => {
+        mixer.disconnect(id);
+        message = "侧链已移除 · 被压低轨道平滑回到基础音量";
+      });
+    },
     master(n: number) {
       mixer.master(n);
       notify();
@@ -259,7 +299,7 @@ export function createStudio(notify: () => void) {
     demo() {
       guard(() => {
         install(demoSession());
-        message = "示范已载入 · 点击播放，听听凌晨两点。";
+        message = "示范已载入 · 鼓点会侧链压低和弦，点击播放听听凌晨两点。";
       });
     },
     save() {
@@ -277,6 +317,7 @@ export function createStudio(notify: () => void) {
           tracks: a.tracks,
           channels: m.channels,
           master: m.master,
+          sidechains: m.sidechains,
         });
         message = "作品已保存到本机浏览器";
       });

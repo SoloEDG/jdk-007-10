@@ -17,6 +17,17 @@ export function demoSession(): Session {
       chords: { volume: 0.55, muted: false },
       lead: { volume: 0.55, muted: false },
     },
+    sidechains: [
+      {
+        id: "demo-duck",
+        sourceId: "rhythm",
+        targetId: "chords",
+        depth: 0.65,
+        attack: 10,
+        release: 300,
+        threshold: -28,
+      },
+    ],
     tracks: [
       {
         id: "rhythm",

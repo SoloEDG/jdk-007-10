@@ -102,9 +102,14 @@ export function App() {
             channels={v.mixer.channels}
             master={v.mixer.master}
             running={v.transport.running}
+            ducking={v.mixer.ducking}
+            sidechains={v.mixer.sidechains}
             volume={s.volume}
             mute={s.mute}
             setMaster={s.master}
+            connect={s.connectSidechain}
+            updateSidechain={s.updateSidechain}
+            disconnectSidechain={s.disconnectSidechain}
           />
           <section className="panel performance-panel">
             <div className="section-heading">
